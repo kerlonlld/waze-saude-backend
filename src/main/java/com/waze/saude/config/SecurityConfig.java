@@ -31,8 +31,14 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of("http://localhost:5173"));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+
+        // CORREÇÃO: Permitindo o Localhost (desenvolvimento) e o link da Vercel (produção)
+        config.setAllowedOrigins(List.of(
+                "http://localhost:5173",
+                "https://waze-saude-frontend.vercel.app"
+        ));
+
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
 
