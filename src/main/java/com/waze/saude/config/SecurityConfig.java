@@ -18,11 +18,13 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Aponta para a configuração abaixo
+                // 1. Ativa explicitamente a configuração de CORS antes das regras de autenticação
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/ubs/**").permitAll() // Libera as rotas da UBS
-                        .anyRequest().permitAll() // Enquanto estiver testando, libera tudo para facilitar!
+                        // 2. Garante a liberação pública total para qualquer rota dentro de /api/
+                        .requestMatchers("/api/**").permitAll()
+                        .anyRequest().permitAll()
                 );
 
         return http.build();
@@ -32,7 +34,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        // CORREÇÃO: Permitindo o Localhost (desenvolvimento) e o link da Vercel (produção)
+        // 3. Permite as origens de desenvolvimento e produção
         config.setAllowedOrigins(List.of(
                 "http://localhost:5173",
                 "https://waze-saude-frontend.vercel.app"
