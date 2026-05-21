@@ -40,6 +40,7 @@ public class UbsController {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
     }
+//test
 
     // 3. Buscar Fila da Unidade por ID
     @GetMapping("/fila/{unidadeId}")
