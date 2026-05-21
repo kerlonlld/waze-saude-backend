@@ -12,7 +12,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/ubs")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
+// CORREÇÃO: Garante que origens, métodos e cabeçalhos sejam aceitos sem restrições do navegador
+@CrossOrigin(origins = "*", allowedHeaders = "*", methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class UbsController {
 
     private final UbsService ubsService;
