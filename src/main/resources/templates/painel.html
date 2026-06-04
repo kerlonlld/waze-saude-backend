@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Waze da Saúde - Painel de Atendimento</title>
+    <link rel="stylesheet" href="/style.css" th:href="@{/style.css}" />
+</head>
+<body>
+    <main class="container">
+        <nav class="topnav">
+            <div class="brand">Waze da Saúde</div>
+          
+        </nav>
+
+        <header>
+            <h1>Dashboard de atendimento</h1>
+            <p>Escolha a UBS e gerencie a fila com vários painéis de controle.</p>
+        </header>
+
+        <div class="dashboard-grid painel-grid">
+            <section class="card panel panel-secondary">
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-label">Painel</span>
+                        <h2>Selecionar UBS</h2>
+                    </div>
+                </div>
+                <button id="refresh-units" class="secondary">Atualizar unidades</button>
+                <div id="painel-units" class="list panel-list"></div>
+            </section>
+
+            <section class="card panel panel-primary hidden" id="queue-panel">
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-label">Painel</span>
+                        <h2>Fila de atendimento</h2>
+                    </div>
+                </div>
+                <p id="selected-unit-name" class="panel-summary"></p>
+                <div class="panel-actions">
+                    <button id="refresh-queue" class="secondary">Atualizar fila</button>
+                    <button id="call-next" class="primary">Chamar próximo</button>
+                    <button id="finish-attendance" class="secondary">Finalizar atendimento</button>
+                </div>
+                <div id="queue-list" class="list panel-list"></div>
+            </section>
+        </div>
+
+        <section class="card panel panel-tertiary" id="finalized-panel">
+            <div class="panel-header">
+                <div>
+                    <span class="panel-label">Painel</span>
+                    <h2>Atendimentos finalizados</h2>
+                </div>
+            </div>
+            <div id="finalized-list" class="list panel-list"></div>
+        </section>
+
+        <div id="message" class="message hidden"></div>
+    </main>
+
+    <script>
+        const defaultLatitude = -23.55052;
+        const defaultLongitude = -46.633308;
+        const state = {
+            unidades: [],
+            unidadeSelecionada: null,
+            fila: [],
+            finalizados: []
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('refresh-units').addEventListener('click', carregarUnidades);
+            document.getElementById('refresh-queue').addEventListener('click', () => carregarFila(state.unidadeSelecionada?.idUnidade));
+            document.getElementById('call-next').addEventListener('click', chamarProximo);
+            document.getElementById('finish-attendance').addEventListener('click', finalizarAtendimento);
+            carregarUnidades();
+
+            setInterval(() => {
+                if (state.unidadeSelecionada) {
+                    carregarFila(state.unidadeSelecionada.idUnidade);
+                }
+            }, 5000);
+        });
+
+        function exibirMensagem(text, type = 'info') {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.classList.remove('hidden');
+            setTimeout(() => messageEl.classList.add('hidden'), 6000);
+        }
+
+        async function carregarUnidades() {
+            try {
+                const response = await fetch(`/api/ubs/proximas?lat=${defaultLatitude}&lon=${defaultLongitude}`);
+                if (!response.ok) throw new Error('Não foi possível carregar as unidades.');
+                state.unidades = await response.json();
+                renderUnidades();
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        function renderUnidades() {
+            const container = document.getElementById('painel-units');
+            container.innerHTML = '';
+
+            if (!state.unidades.length) {
+                container.innerHTML = '<p>Nenhuma unidade encontrada.</p>';
+                return;
+            }
+
+            state.unidades.forEach(ubs => {
+                const item = document.createElement('div');
+                item.className = 'list-item';
+                item.innerHTML = `
+                    <strong>${ubs.nome}</strong>
+                    <p>${ubs.endereco}</p>
+                    <p>Espera estimada: ${ubs.tempoEspera} min</p>
+                    <button class="secondary" data-id="${ubs.idUnidade}">Selecionar</button>
+                `;
+                item.querySelector('button').addEventListener('click', () => selecionarUnidade(ubs));
+                container.appendChild(item);
+            });
+        }
+
+        function selecionarUnidade(ubs) {
+            state.unidadeSelecionada = ubs;
+            document.getElementById('selected-unit-name').textContent = `UBS selecionada: ${ubs.nome} — ${ubs.endereco}`;
+            document.getElementById('queue-panel').classList.remove('hidden');
+            carregarFila(ubs.idUnidade);
+        }
+
+        async function carregarFila(unidadeId) {
+            if (!unidadeId) return;
+            try {
+                const response = await fetch(`/api/ubs/fila/${unidadeId}`);
+                if (!response.ok) throw new Error('Erro ao carregar a fila.');
+                state.fila = await response.json();
+                renderFila();
+                carregarFinalizados(unidadeId);
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        async function carregarFinalizados(unidadeId) {
+            if (!unidadeId) return;
+            try {
+                const response = await fetch(`/api/ubs/fila/finalizados/${unidadeId}`);
+                if (!response.ok) throw new Error('Erro ao carregar finalizados.');
+                state.finalizados = await response.json();
+                renderFinalizados();
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        function renderFila() {
+            const container = document.getElementById('queue-list');
+            container.innerHTML = '';
+            if (!state.fila.length) {
+                container.innerHTML = '<p>Nenhum paciente aguardando no momento.</p>';
+                return;
+            }
+
+            state.fila.forEach((ficha, index) => {
+                const item = document.createElement('div');
+                item.className = 'list-item';
+                item.innerHTML = `
+                    <strong>${index + 1}. ${ficha.paciente.nomeCompleto || ficha.paciente.cpf}</strong>
+                    <p>CPF: ${ficha.paciente.cpf}</p>
+                    <p>Status: ${ficha.status}</p>
+                    <p>Tempo estimado: ${ficha.tempoEsperaMinutos} min</p>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        async function chamarProximo() {
+            if (!state.unidadeSelecionada) {
+                exibirMensagem('Selecione uma unidade antes de chamar o próximo paciente.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/ubs/atendimento/chamar/${state.unidadeSelecionada.idUnidade}`, {
+                    method: 'POST'
+                });
+                const body = await response.json();
+                if (!response.ok) throw new Error(body.message || 'Erro ao chamar próximo paciente.');
+                exibirMensagem(`Próximo paciente chamado: ${body.paciente.nomeCompleto || body.paciente.cpf}`, 'success');
+                carregarFila(state.unidadeSelecionada.idUnidade);
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        async function finalizarAtendimento() {
+            if (!state.unidadeSelecionada) {
+                exibirMensagem('Selecione uma unidade antes de finalizar o atendimento.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/ubs/atendimento/finalizar/${state.unidadeSelecionada.idUnidade}`, {
+                    method: 'POST'
+                });
+                const body = await response.json();
+                if (!response.ok) throw new Error(body.message || 'Erro ao finalizar atendimento.');
+                exibirMensagem(`Atendimento finalizado para ${body.paciente.nomeCompleto || body.paciente.cpf}.`, 'success');
+                carregarFila(state.unidadeSelecionada.idUnidade);
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        function renderFinalizados() {
+            const container = document.getElementById('finalized-list');
+            container.innerHTML = '';
+            if (!state.finalizados.length) {
+                container.innerHTML = '<p>Nenhum atendimento finalizado nesta unidade ainda.</p>';
+                return;
+            }
+
+            state.finalizados.forEach((ficha, index) => {
+                const item = document.createElement('div');
+                item.className = 'list-item';
+                item.innerHTML = `
+                    <strong>${index + 1}. ${ficha.paciente.nomeCompleto || ficha.paciente.cpf}</strong>
+                    <p>CPF: ${ficha.paciente.cpf}</p>
+                    <p>Status: ${ficha.status}</p>
+                    <p>Tempo de espera: ${ficha.tempoEsperaMinutos} min</p>
+                `;
+                container.appendChild(item);
+            });
+        }
+    </script>
+</body>
+</html>

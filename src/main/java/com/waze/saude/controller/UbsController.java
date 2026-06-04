@@ -67,6 +67,19 @@ public class UbsController {
         }
     }
 
+    @GetMapping("/atendimento/ultima")
+    public ResponseEntity<?> buscarUltimaFicha(@RequestParam String cpf) {
+        try {
+            FichaAtendimento ficha = ubsService.buscarUltimaFichaPorCpf(cpf);
+            if (ficha != null) {
+                return ResponseEntity.ok(ficha);
+            }
+            return ResponseEntity.noContent().build();
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
     // 5. Cancelar Check-in / Sair da Fila (Check-out)
     @PostMapping("/atendimento/checkout/{fichaId}")
     public ResponseEntity<?> cancelarCheckIn(@PathVariable Long fichaId) {
@@ -84,6 +97,28 @@ public class UbsController {
         try {
             FichaAtendimento fichaChamada = ubsService.chamarProximo(unidadeId);
             return ResponseEntity.ok(fichaChamada);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    // 7. Finalizar o atendimento atual da unidade
+    @PostMapping("/atendimento/finalizar/{unidadeId}")
+    public ResponseEntity<?> finalizarAtendimento(@PathVariable Long unidadeId) {
+        try {
+            FichaAtendimento fichaFinalizada = ubsService.finalizarAtendimento(unidadeId);
+            return ResponseEntity.ok(fichaFinalizada);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    // 8. Buscar atendimentos finalizados da unidade
+    @GetMapping("/fila/finalizados/{unidadeId}")
+    public ResponseEntity<?> obterFilaFinalizadaPorUnidade(@PathVariable Long unidadeId) {
+        try {
+            List<FichaAtendimento> finalizados = ubsService.buscarFichaFinalizadaPorUnidadeId(unidadeId);
+            return ResponseEntity.ok(finalizados);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }

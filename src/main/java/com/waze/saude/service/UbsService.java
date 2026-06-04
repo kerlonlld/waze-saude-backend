@@ -1,17 +1,19 @@
 package com.waze.saude.service;
 
-import com.waze.saude.entity.FichaAtendimento;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+
+import com.waze.saude.entity.FichaAtendimento;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Service
 public class UbsService {
@@ -140,6 +142,18 @@ public class UbsService {
                 .orElse(null);
     }
 
+    public FichaAtendimento buscarUltimaFichaPorCpf(String cpf) {
+        if (cpf == null) return null;
+        final String cpfLimpo = cpf.replaceAll("\\D", "");
+
+        return bancoFichas.stream()
+                .filter(f -> f.getPaciente() != null && f.getPaciente().getCpf() != null &&
+                        cpfLimpo.equals(f.getPaciente().getCpf().replaceAll("\\D", "")))
+                .sorted((f1, f2) -> f2.getEntradaFila().compareTo(f1.getEntradaFila()))
+                .findFirst()
+                .orElse(null);
+    }
+
     /**
      * 5. Cancelar Check-in / Sair da Fila (Check-out)
      */
@@ -173,6 +187,26 @@ public class UbsService {
 
         proximo.setStatus("EM_ATENDIMENTO");
         return proximo;
+    }
+
+    public FichaAtendimento finalizarAtendimento(Long unidadeId) {
+        FichaAtendimento atendimentoAtual = bancoFichas.stream()
+                .filter(f -> f.getUnidadeSaude() != null &&
+                        unidadeId.equals(f.getUnidadeSaude().getIdUnidade()) &&
+                        "EM_ATENDIMENTO".equals(f.getStatus()))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Não há paciente em atendimento nesta unidade."));
+
+        atendimentoAtual.setStatus("FINALIZADO");
+        return atendimentoAtual;
+    }
+
+    public List<FichaAtendimento> buscarFichaFinalizadaPorUnidadeId(Long unidadeId) {
+        return bancoFichas.stream()
+                .filter(f -> f.getUnidadeSaude() != null &&
+                        unidadeId.equals(f.getUnidadeSaude().getIdUnidade()) &&
+                        "FINALIZADO".equals(f.getStatus()))
+                .collect(Collectors.toList());
     }
 
     /**

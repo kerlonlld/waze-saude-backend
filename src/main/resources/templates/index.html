@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Waze da Saúde - Agendamento</title>
+    <link rel="stylesheet" href="/style.css" th:href="@{/style.css}" />
+</head>
+<body>
+    <main class="container">
+        <nav class="topnav">
+            <div class="brand">Waze da Saúde</div>
+            <div class="nav-actions">
+               
+            </div>
+        </nav>
+
+        <header>
+            <h1>Agendamento e fila da UBS</h1>
+            <p>Use os painéis abaixo para buscar unidades, confirmar check-in e acompanhar sua ficha.</p>
+        </header>
+
+        <div class="dashboard-grid">
+            <section class="card panel panel-primary" id="dados-paciente-section">
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-label">Painel 1</span>
+                        <h2>Dados do paciente</h2>
+                    </div>
+                    <span class="panel-badge">Entrada</span>
+                </div>
+                <div class="form-grid">
+                    <label>
+                        Nome completo
+                        <input id="nome" type="text" placeholder="Nome do paciente" />
+                    </label>
+                    <label>
+                        CPF
+                        <input id="cpf" type="text" placeholder="00000000000" />
+                    </label>
+                </div>
+                <button id="search-units" class="primary">Buscar UBS próximas</button>
+            </section>
+
+            <section class="card panel panel-secondary hidden" id="unidades-section">
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-label">Painel 2</span>
+                        <h2>Unidades próximas</h2>
+                    </div>
+                </div>
+                <div id="unidades-list" class="list panel-list"></div>
+                <div id="confirm-section" class="panel-confirm hidden">
+                    <div class="confirm-card">
+                        <p id="selected-unit" class="unit-summary panel-summary"></p>
+                        <button id="confirm-checkin" class="primary">Confirmar check-in</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card panel panel-tertiary hidden" id="ticket-section">
+                <div class="panel-header">
+                    <div>
+                        <span class="panel-label">Painel 3</span>
+                        <h2>Ficha ativa</h2>
+                    </div>
+                </div>
+                <div id="ticket-details" class="ticket"></div>
+                <div class="panel-actions">
+                    <button id="cancel-ticket" class="secondary">Cancelar check-in</button>
+                    <button id="new-checkin" class="primary hidden">Novo check-in</button>
+                </div>
+            </section>
+        </div>
+
+        <div id="message" class="message hidden"></div>
+    </main>
+
+    <script>
+        const defaultLatitude = -23.55052;
+        const defaultLongitude = -46.633308;
+        const state = {
+            unidades: [],
+            unidadeSelecionada: null,
+            fichaAtiva: null,
+            // timestamp (ms) until which polling should be ignored after user action
+            ignorePollingUntil: 0,
+            // quando true, ignoramos fichas com status FINALIZADO até o usuário efetuar novo check-in
+            suppressFinalizado: false,
+            pollingIntervalId: null
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('search-units').addEventListener('click', buscarUnidades);
+            document.getElementById('confirm-checkin').addEventListener('click', confirmarCheckin);
+            document.getElementById('cancel-ticket').addEventListener('click', cancelarCheckin);
+            document.getElementById('new-checkin').addEventListener('click', reiniciarCheckin);
+            carregarFichaAtiva();
+            iniciarPollingFicha();
+        });
+
+        function exibirMensagem(text, type = 'info') {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.classList.remove('hidden');
+            setTimeout(() => messageEl.classList.add('hidden'), 6000);
+        }
+
+        async function buscarUnidades() {
+            const nome = document.getElementById('nome').value.trim();
+            const cpf = document.getElementById('cpf').value.trim();
+            if (!nome || !cpf) {
+                exibirMensagem('Informe nome e CPF para buscar unidades.', 'error');
+                return;
+            }
+
+            localStorage.setItem('saudeNome', nome);
+            localStorage.setItem('saudeCpf', cpf);
+            state.suppressFinalizado = false;
+            iniciarPollingFicha();
+
+            try {
+                const response = await fetch(`/api/ubs/proximas?lat=${defaultLatitude}&lon=${defaultLongitude}`);
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null);
+                    throw new Error(payload?.message || `Falha ao buscar unidades (${response.status})`);
+                }
+                state.unidades = await response.json();
+                renderUnidades();
+            } catch (error) {
+                console.error('Erro buscando UBSs:', error);
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        function renderUnidades() {
+            const section = document.getElementById('unidades-section');
+            const list = document.getElementById('unidades-list');
+            list.innerHTML = '';
+            state.unidadeSelecionada = null;
+
+            if (!state.unidades.length) {
+                list.innerHTML = '<p class="panel-summary">Nenhuma unidade encontrada.</p>';
+                section.classList.remove('hidden');
+                return;
+            }
+
+            state.unidades.forEach((ubs, index) => {
+                const item = document.createElement('div');
+                item.className = `list-item ubs-card ubs-card-${(index % 4) + 1}`;
+                item.innerHTML = `
+                    <strong>${ubs.nome}</strong>
+                    <p>${ubs.endereco}</p>
+                    <p>Distância: ${ubs.distancia.toFixed(1)} km | Espera: ${ubs.tempoEspera} min</p>
+                    <button class="secondary mt-2" data-id="${ubs.idUnidade}">Selecionar esta UBS</button>
+                `;
+                item.querySelector('button').addEventListener('click', () => selecionarUnidade(ubs));
+                list.appendChild(item);
+            });
+
+            // Mostra o painel 2 de unidades mantendo o painel 1 visível inicialmente
+            document.getElementById('dados-paciente-section').classList.remove('hidden');
+            section.classList.remove('hidden');
+        }
+
+        function selecionarUnidade(ubs) {
+            state.unidadeSelecionada = ubs;
+            document.getElementById('selected-unit').innerHTML = `<strong>Unidade Selecionada:</strong> ${ubs.nome} — ${ubs.endereco}`;
+            document.getElementById('confirm-section').classList.remove('hidden');
+        }
+
+        async function confirmarCheckin() {
+            const nome = document.getElementById('nome').value.trim();
+            const cpf = document.getElementById('cpf').value.trim();
+            if (!nome || !cpf || !state.unidadeSelecionada) {
+                exibirMensagem('Preencha todos os dados e selecione uma UBS.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/ubs/checkin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cpf, nome, unidadeId: state.unidadeSelecionada.idUnidade })
+                });
+
+                const body = await response.json();
+                if (!response.ok) throw new Error(body.message || 'Erro ao confirmar check-in');
+
+                state.fichaAtiva = body;
+                state.suppressFinalizado = false;
+                state.ignorePollingUntil = Date.now() + 15000;
+                mostrarFichaAtiva();
+                exibirMensagem('Check-in realizado com sucesso!', 'success');
+                iniciarPollingFicha();
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        async function carregarFichaAtiva() {
+            const cpf = localStorage.getItem('saudeCpf');
+            if (!cpf) return;
+
+            document.getElementById('cpf').value = cpf;
+            const nome = localStorage.getItem('saudeNome');
+            if (nome) document.getElementById('nome').value = nome;
+
+            try {
+                const response = await fetch(`/api/ubs/atendimento/ativa?cpf=${encodeURIComponent(cpf)}`);
+                if (response.status === 204) {
+                    await carregarUltimaFicha(cpf);
+                    return;
+                }
+                if (!response.ok) throw new Error('Erro ao verificar ficha ativa');
+                state.fichaAtiva = await response.json();
+                mostrarFichaAtiva();
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        async function carregarUltimaFicha(cpf) {
+            try {
+                const response = await fetch(`/api/ubs/atendimento/ultima?cpf=${encodeURIComponent(cpf)}`);
+                if (response.status === 204) {
+                    state.fichaAtiva = null;
+                    mostrarFichaAtiva();
+                    return;
+                }
+                if (!response.ok) throw new Error('Erro ao verificar histórico de atendimento');
+                const ficha = await response.json();
+                // Se o usuário acabou de reiniciar o check-in, evita sobrescrever a UI
+                if (ficha && ficha.status === 'FINALIZADO') {
+                    if (state.suppressFinalizado) return;
+                    if (Date.now() < state.ignorePollingUntil) return;
+                }
+                state.fichaAtiva = ficha;
+                mostrarFichaAtiva();
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        function iniciarPollingFicha() {
+            const cpf = localStorage.getItem('saudeCpf');
+            if (!cpf) return;
+            if (state.pollingIntervalId) return; // já em polling
+            state.pollingIntervalId = setInterval(async () => {
+                if (Date.now() < state.ignorePollingUntil) return;
+                const cpfAtual = localStorage.getItem('saudeCpf');
+                if (!cpfAtual) return;
+                await atualizarFichaPaciente(cpfAtual);
+            }, 5000);
+        }
+
+        function cancelarPollingFicha() {
+            if (state.pollingIntervalId) {
+                clearInterval(state.pollingIntervalId);
+                state.pollingIntervalId = null;
+            }
+        }
+
+        async function atualizarFichaPaciente(cpf) {
+            try {
+                const response = await fetch(`/api/ubs/atendimento/ativa?cpf=${encodeURIComponent(cpf)}`);
+                if (response.status === 204) {
+                    await carregarUltimaFicha(cpf);
+                    return;
+                }
+                if (!response.ok) throw new Error('Erro ao atualizar status da ficha');
+                const fichaAtualizada = await response.json();
+                // Se o usuário reiniciou o check-in e estamos suprimindo ficha finalizada, ignora
+                if (fichaAtualizada && fichaAtualizada.status === 'FINALIZADO' && state.suppressFinalizado) {
+                    return;
+                }
+                const mudou = !state.fichaAtiva || state.fichaAtiva.status !== fichaAtualizada.status || state.fichaAtiva.id !== fichaAtualizada.id;
+                state.fichaAtiva = fichaAtualizada;
+                if (mudou) {
+                    mostrarFichaAtiva();
+                    exibirMensagem('Atualização em tempo real: seu atendimento mudou de status.', 'success');
+                }
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        // ALTERAÇÃO COMPLETA AQUI: Controla o que esconde e o que aparece
+        function mostrarFichaAtiva() {
+            if (!state.fichaAtiva) {
+                // Se NÃO tem ficha ativa: mostra os painéis de cadastro e busca
+                document.getElementById('ticket-section').classList.add('hidden');
+                document.getElementById('dados-paciente-section').classList.remove('hidden');
+                document.getElementById('confirm-section').classList.add('hidden');
+                return;
+            }
+
+            // Se TEM ficha ativa: Esconde TUDO (Painel 1 e Painel 2) e mostra só a ficha (Painel 3)
+            document.getElementById('dados-paciente-section').classList.add('hidden');
+            document.getElementById('unidades-section').classList.add('hidden');
+            document.getElementById('confirm-section').classList.add('hidden');
+
+            const ticket = document.getElementById('ticket-details');
+            const btnCancelar = document.getElementById('cancel-ticket');
+            const btnNovaFicha = document.getElementById('new-checkin');
+            const statusTexto = state.fichaAtiva.status === 'EM_ATENDIMENTO' ? 'Em atendimento' :
+                state.fichaAtiva.status === 'AGUARDANDO' ? 'Aguardando' :
+                state.fichaAtiva.status === 'FINALIZADO' ? 'Finalizado' :
+                state.fichaAtiva.status === 'CANCELADO' ? 'Cancelado' : state.fichaAtiva.status;
+            const statusClass = state.fichaAtiva.status === 'EM_ATENDIMENTO' ? 'status-em-atendimento' :
+                state.fichaAtiva.status === 'AGUARDANDO' ? 'status-aguardando' :
+                state.fichaAtiva.status === 'FINALIZADO' ? 'status-finalizado' : '';
+
+            ticket.innerHTML = `
+                <div class="ticket-item">
+                    <p><strong>CPF:</strong> ${state.fichaAtiva.paciente.cpf}</p>
+                    <p><strong>Paciente:</strong> ${state.fichaAtiva.paciente.nomeCompleto || '—'}</p>
+                    <p><strong>UBS:</strong> ${state.fichaAtiva.unidadeSaude.nome}</p>
+                    <p><strong>Status:</strong> <span class="status-badge ${statusClass}">${statusTexto}</span></p>
+                    <p><strong>Tempo de espera estimado:</strong> ${state.fichaAtiva.tempoEsperaMinutos} min</p>
+                </div>
+            `;
+
+            const ativo = state.fichaAtiva.status === 'AGUARDANDO' || state.fichaAtiva.status === 'EM_ATENDIMENTO';
+            btnCancelar.classList.toggle('hidden', !ativo);
+            btnNovaFicha.classList.toggle('hidden', ativo);
+            document.getElementById('ticket-section').classList.remove('hidden');
+        }
+
+        async function cancelarCheckin() {
+            if (!state.fichaAtiva) return;
+            try {
+                const response = await fetch(`/api/ubs/atendimento/checkout/${state.fichaAtiva.id}`, {
+                    method: 'POST'
+                });
+                const body = await response.json();
+                if (!response.ok) throw new Error(body.message || 'Erro ao cancelar check-in');
+                
+                state.fichaAtiva = null;
+                
+                // Volta ao estado inicial (Esconde ficha, mostra painel 1 novamente)
+                document.getElementById('ticket-section').classList.add('hidden');
+                document.getElementById('dados-paciente-section').classList.remove('hidden');
+                document.getElementById('unidades-section').classList.add('hidden');
+                document.getElementById('confirm-section').classList.add('hidden');
+                
+                exibirMensagem('Check-in cancelado com sucesso.', 'success');
+            } catch (error) {
+                exibirMensagem(error.message, 'error');
+            }
+        }
+
+        function reiniciarCheckin() {
+            state.fichaAtiva = null;
+            document.getElementById('ticket-section').classList.add('hidden');
+            document.getElementById('dados-paciente-section').classList.remove('hidden');
+            document.getElementById('unidades-section').classList.add('hidden');
+            document.getElementById('confirm-section').classList.add('hidden');
+            // Evita que o polling reponha imediatamente a ficha finalizada
+            state.ignorePollingUntil = Date.now() + 15000; // 15s
+            // suprimir recolocação de ficha finalizada até novo check-in
+            state.suppressFinalizado = true;
+            cancelarPollingFicha();
+            // Reinicia o polling após um tempo maior para dar margem ao usuário
+            setTimeout(() => {
+                state.ignorePollingUntil = Date.now() + 5000;
+                iniciarPollingFicha();
+            }, 15000);
+        }
+    </script>
+</body>
+</html>
